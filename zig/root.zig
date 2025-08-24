@@ -126,7 +126,7 @@ pub const ResponseBuilder = struct {
 
 pub fn Pipeline(comptime Handler: type) type {
     return struct {
-        handler: Handler,
+        handler: *Handler,
         allocator: std.mem.Allocator,
         ctx: *Context,
         sampler: *Sampler,
