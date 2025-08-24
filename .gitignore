@@ -9,6 +9,9 @@ zig-out/
 # OS
 .DS_Store
 
+# Local
+local/
+
 # Extensions
 
 *.a
