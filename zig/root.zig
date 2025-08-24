@@ -124,11 +124,9 @@ pub const ResponseBuilder = struct {
     tokens: std.ArrayListUnmanaged(Token),
 };
 
-pub fn Pipeline(
-    on_progress: ?fn (part: []const u8) void,
-    on_complete: ?fn (response: []const u8) void,
-) type {
+pub fn Pipeline(comptime Handler: type) type {
     return struct {
+        handler: Handler,
         allocator: std.mem.Allocator,
         ctx: *Context,
         sampler: *Sampler,
@@ -195,8 +193,9 @@ pub fn Pipeline(
                 // Create slice from the buffer for the current part
                 const part_slice = response_buffer.items[start_pos..];
 
-                if (on_progress) |callback| {
-                    callback(part_slice);
+                if (@hasDecl(Handler, "onProgress")) {
+                    // Call the chunk handler with the new piece
+                    self.handler.onProgress(part_slice);
                 }
 
                 // update batch for next iteration
@@ -205,9 +204,8 @@ pub fn Pipeline(
                 n_decode += 1;
             }
 
-            if (on_complete) |callback| {
-                // No need to allocate or join - we already have the complete response
-                callback(response_buffer.items);
+            if (@hasDecl(Handler, "onComplete")) {
+                self.handler.onComplete(response_buffer.items);
             }
         }
     };

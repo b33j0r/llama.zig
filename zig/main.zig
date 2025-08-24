@@ -17,10 +17,8 @@ pub fn main() !u8 {
     var sampler = try llama.Sampler.default();
     defer sampler.deinit();
 
-    const pipeline = llama.Pipeline(
-        onProgress,
-        onComplete,
-    ){
+    const pipeline = llama.Pipeline(Handler){
+        .handler = .{},
         .allocator = allocator,
         .ctx = &ctx,
         .sampler = &sampler,
@@ -34,10 +32,11 @@ pub fn main() !u8 {
     return 0;
 }
 
-fn onProgress(token: []const u8) void {
-    std.debug.print("{s}", .{token});
-}
-
-fn onComplete(full: []const u8) void {
-    std.debug.print("\n---\nFull output:\n{s}\n", .{full});
-}
+const Handler = struct {
+    pub fn onProgress(_: Handler, text: []const u8) void {
+        std.debug.print("{s}", .{text});
+    }
+    pub fn onComplete(_: Handler, text: []const u8) void {
+        std.debug.print("\n{s}\n", .{text});
+    }
+};
