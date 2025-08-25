@@ -124,89 +124,88 @@ pub const ResponseBuilder = struct {
     tokens: std.ArrayListUnmanaged(Token),
 };
 
-pub fn Pipeline(comptime Handler: type) type {
-    return struct {
-        handler: *Handler,
-        allocator: std.mem.Allocator,
-        ctx: *Context,
-        sampler: *Sampler,
-        max_tokens: i32 = 1024,
+pub const Pipeline = struct {
+    self: *anyopaque = undefined,
+    on_progress: ?*const fn (self: *anyopaque, part: []const u8) void,
+    on_complete: ?*const fn (self: *anyopaque, text: []const u8) void,
+    allocator: std.mem.Allocator,
+    ctx: *Context,
+    sampler: *Sampler,
+    max_tokens: i32 = 1024,
 
-        const Self = @This();
+    const Self = @This();
 
-        pub fn generate(self: Self, prompt: []const u8) !void {
-            const vocab = self.ctx.model.vocab;
-            const n_prompt = -c.llama_tokenize(vocab, @as([*c]const u8, @ptrCast(prompt)), @as(i32, @intCast(prompt.len)), null, 0, true, true);
-            if (n_prompt < 0) return error.TokenizationProbeFailed;
+    pub fn generate(self: Self, prompt: []const u8) !void {
+        const vocab = self.ctx.model.vocab;
+        const n_prompt = -c.llama_tokenize(vocab, @as([*c]const u8, @ptrCast(prompt)), @as(i32, @intCast(prompt.len)), null, 0, true, true);
+        if (n_prompt < 0) return error.TokenizationProbeFailed;
 
-            const prompt_tokens = try std.heap.c_allocator.alloc(Token, @as(usize, @intCast(n_prompt)));
-            defer std.heap.c_allocator.free(prompt_tokens);
+        const prompt_tokens = try std.heap.c_allocator.alloc(Token, @as(usize, @intCast(n_prompt)));
+        defer std.heap.c_allocator.free(prompt_tokens);
 
-            if (c.llama_tokenize(vocab, @as([*c]const u8, @ptrCast(prompt)), @as(i32, @intCast(prompt.len)), prompt_tokens.ptr, n_prompt, true, true) < 0) {
-                return error.TokenizationFailed;
-            }
-
-            var batch = c.llama_batch_get_one(prompt_tokens.ptr, n_prompt);
-
-            var n_pos: i32 = 0;
-            var n_decode: i32 = 0;
-            var new_token_id: c.llama_token = 0;
-
-            // Pre-allocate response buffer for better memory management
-            var response_buffer: std.ArrayListUnmanaged(u8) = .empty;
-            defer response_buffer.deinit(self.allocator);
-
-            // Reserve some space to reduce reallocations
-            try response_buffer.ensureTotalCapacity(self.allocator, 4096);
-
-            const max_length = n_prompt + self.max_tokens;
-            while (n_pos + batch.n_tokens < max_length) {
-                // evaluate the current batch with the transformer model
-                if (c.llama_decode(self.ctx.ptr.?, batch) != 0) {
-                    return error.EvalFailed;
-                }
-
-                n_pos += batch.n_tokens;
-
-                // sample the next token
-                new_token_id = self.sampler.sample(self.ctx);
-
-                // is it an end of generation?
-                if (c.llama_vocab_is_eog(vocab, new_token_id)) {
-                    break;
-                }
-
-                var buf: [128]u8 = undefined;
-                const n = c.llama_token_to_piece(vocab, new_token_id, &buf[0], buf.len, 0, true);
-                if (n < 0) {
-                    return error.TokenToPieceFailed;
-                }
-
-                const piece = buf[0..@as(usize, @intCast(n))];
-
-                // Record current position in buffer before appending
-                const start_pos = response_buffer.items.len;
-
-                // Append the piece to our final buffer
-                try response_buffer.appendSlice(self.allocator, piece);
-
-                // Create slice from the buffer for the current part
-                const part_slice = response_buffer.items[start_pos..];
-
-                if (@hasDecl(Handler, "onProgress")) {
-                    // Call the chunk handler with the new piece
-                    self.handler.onProgress(part_slice);
-                }
-
-                // update batch for next iteration
-                batch = c.llama_batch_get_one(&new_token_id, 1);
-
-                n_decode += 1;
-            }
-
-            if (@hasDecl(Handler, "onComplete")) {
-                self.handler.onComplete(response_buffer.items);
-            }
+        if (c.llama_tokenize(vocab, @as([*c]const u8, @ptrCast(prompt)), @as(i32, @intCast(prompt.len)), prompt_tokens.ptr, n_prompt, true, true) < 0) {
+            return error.TokenizationFailed;
         }
-    };
-}
+
+        var batch = c.llama_batch_get_one(prompt_tokens.ptr, n_prompt);
+
+        var n_pos: i32 = 0;
+        var n_decode: i32 = 0;
+        var new_token_id: c.llama_token = 0;
+
+        // Pre-allocate response buffer for better memory management
+        var response_buffer: std.ArrayListUnmanaged(u8) = .empty;
+        defer response_buffer.deinit(self.allocator);
+
+        // Reserve some space to reduce reallocations
+        try response_buffer.ensureTotalCapacity(self.allocator, 4096);
+
+        const max_length = n_prompt + self.max_tokens;
+        while (n_pos + batch.n_tokens < max_length) {
+            // evaluate the current batch with the transformer model
+            if (c.llama_decode(self.ctx.ptr.?, batch) != 0) {
+                return error.EvalFailed;
+            }
+
+            n_pos += batch.n_tokens;
+
+            // sample the next token
+            new_token_id = self.sampler.sample(self.ctx);
+
+            // is it an end of generation?
+            if (c.llama_vocab_is_eog(vocab, new_token_id)) {
+                break;
+            }
+
+            var buf: [128]u8 = undefined;
+            const n = c.llama_token_to_piece(vocab, new_token_id, &buf[0], buf.len, 0, true);
+            if (n < 0) {
+                return error.TokenToPieceFailed;
+            }
+
+            const piece = buf[0..@as(usize, @intCast(n))];
+
+            // Record current position in buffer before appending
+            const start_pos = response_buffer.items.len;
+
+            // Append the piece to our final buffer
+            try response_buffer.appendSlice(self.allocator, piece);
+
+            // Create slice from the buffer for the current part
+            const part_slice = response_buffer.items[start_pos..];
+
+            if (self.on_progress) |callback| {
+                callback(self.self, part_slice);
+            }
+
+            // update batch for next iteration
+            batch = c.llama_batch_get_one(&new_token_id, 1);
+
+            n_decode += 1;
+        }
+
+        if (self.on_complete) |callback| {
+            callback(self.self, response_buffer.items);
+        }
+    }
+};
