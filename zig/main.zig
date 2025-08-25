@@ -11,38 +11,30 @@ pub fn main() !u8 {
     var model = try loader.load();
     defer model.deinit();
 
-    var ctx = try llama.Context.init(&model, 1024 * 8);
+    var ctx = try llama.Context.init(&model, .{
+        .n_ctx = 1024 * 2,
+        .n_batch = 1024 * 2,
+    });
     defer ctx.deinit();
 
     var sampler = try llama.Sampler.default();
     defer sampler.deinit();
 
-    var handler = Handler{};
     const pipeline = llama.Pipeline{
-        .self = &handler,
-        .on_progress = &Handler.onProgress,
-        .on_complete = &Handler.onComplete,
         .allocator = allocator,
         .ctx = &ctx,
         .sampler = &sampler,
-        .max_tokens = 1024 * 2,
     };
 
-    pipeline.generate("Make a list of fictional character names for a video game about space trading and piracy. Respond in JSON only") catch |err| {
-        std.debug.print("Error during generation: {any}\n", .{err});
-    };
+    var it = try pipeline.generate(
+        \\JSON list of 25 fictional characters for a space opera. JSON only.
+    );
+    defer it.deinit();
 
+    while (it.nextIgnoreErrors()) |part| {
+        std.debug.print("{s}", .{part});
+    }
+
+    std.debug.print("\n", .{});
     return 0;
 }
-
-const Handler = struct {
-    data: usize = 1337,
-    pub fn onProgress(_: *anyopaque, text: []const u8) void {
-        std.debug.print("{s}", .{text});
-    }
-    pub fn onComplete(ptr: *anyopaque, text: []const u8) void {
-        const self: *Handler = @ptrCast(@alignCast(ptr));
-        std.debug.print("\n{s}\n", .{text});
-        std.debug.print("data: {d}\n", .{self.data});
-    }
-};
